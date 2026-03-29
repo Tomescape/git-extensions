@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "Usage: git squash <count> <message>"
+    echo ""
+    echo "  Squash the last <count> non-merge commits into one with <message>."
+    echo "  Merge commits within the range are included in the squash but not counted."
+    echo ""
+    echo "  Examples:"
+    echo "    git squash 3 \"feat: combine related changes\""
+    echo "    git squash 10 \"refactor: consolidate work-in-progress\""
+    exit 1
+}
+
+die() {
+    echo "Error: $*" >&2
+    exit 1
+}
+
+[ "$#" -ge 2 ] || usage
+
+COUNT="$1"
+MESSAGE="$2"
+
+[[ "$COUNT" =~ ^[0-9]+$ ]] || die "count must be a positive integer, got: '$COUNT'"
+[ "$COUNT" -ge 1 ]          || die "count must be at least 1"
+
+# Require a clean index and working tree
+if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+    die "uncommitted changes detected. Please commit or stash them first."
+fi
+
+# Find the NTH non-merge commit from HEAD (1-indexed)
+BASE_COMMIT=$(git log --no-merges --format="%H" | sed -n "${COUNT}p")
+
+if [ -z "$BASE_COMMIT" ]; then
+    TOTAL=$(git log --no-merges --format="%H" | wc -l | tr -d '[:space:]')
+    die "not enough non-merge commits: requested $COUNT, found $TOTAL"
+fi
+
+# Refuse to squash past the root commit
+if ! git rev-parse --verify "${BASE_COMMIT}^" >/dev/null 2>&1; then
+    die "the ${COUNT}th non-merge commit is the root commit; cannot squash past it"
+fi
+
+BASE_PARENT=$(git rev-parse "${BASE_COMMIT}^")
+
+git reset --soft "$BASE_PARENT"
+git commit -m "$MESSAGE"
+
+echo "Squashed $COUNT non-merge commits into: $(git rev-parse --short HEAD)"
